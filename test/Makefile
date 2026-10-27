@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v
+PROJECT_SOURCES = project.v tau_seed_core.v
 
 ifneq ($(GATES),yes)
 
@@ -30,6 +30,16 @@ VERILOG_SOURCES += $(PDK_ROOT)/sky130A/libs.ref/sky130_fd_sc_hd/verilog/sky130_f
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
 
 endif
+
+# `make WAVES=0` leaves the waveform dump out of tb.v (set TAU_NO_WAVES).
+WAVES ?= 1
+ifeq ($(WAVES),0)
+COMPILE_ARGS    += -DTAU_NO_WAVES
+endif
+
+# The results file name is also read by the checks that run after the simulation.
+COCOTB_RESULTS_FILE ?= results.xml
+export COCOTB_RESULTS_FILE
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
