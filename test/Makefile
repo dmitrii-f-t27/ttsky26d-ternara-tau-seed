@@ -53,3 +53,14 @@ COCOTB_TEST_MODULES = test
 
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim
+
+# False-green guard (SPEC section 6.4). TT runs plain `make` (RTL) and
+# `make clean; GATES=yes make` (gate level); both end up here. The cocotb target
+# `sim` stays available for the mutant runner and for quick runs.
+.DEFAULT_GOAL := tau_guarded
+.PHONY: tau_guarded
+tau_guarded:
+	python3 tau_check_config.py
+	rm -f $(COCOTB_RESULTS_FILE)
+	$(MAKE) sim
+	python3 tau_guard.py --results $(COCOTB_RESULTS_FILE) --expected expected_tests.json --mode $(if $(filter yes,$(GATES)),gl,rtl)

@@ -45,3 +45,19 @@ Using Surfer
 ```sh
 surfer tb.fst
 ```
+
+## Guard against a false green
+
+`make` in this directory runs `tau_guarded` (see the end of [Makefile](Makefile)), which
+
+1. checks that `NW`, `CLOCK_PERIOD` and `clock_hz` agree (`tau_check_config.py`),
+2. runs the cocotb simulation (`make sim`),
+3. runs `tau_guard.py`, which fails unless `results.xml` holds exactly the test names of
+   [expected_tests.json](expected_tests.json) (24 for RTL, 22 for gate level), each once, and none failed,
+   errored or was skipped.
+
+The last line of a good RTL run is `tau_guard: PASS mode=rtl tests=24/24`. With `GATES=yes` it is
+`tau_guard: PASS mode=gl tests=22/22`. Use `make WAVES=0` to leave the waveform dump out.
+Run `cd test && make`, not `make -C test`: the Makefile uses `$(PWD)`.
+
+The pytest checks of the guard run with `python -m pytest -q test/test_tau_guard.py`.

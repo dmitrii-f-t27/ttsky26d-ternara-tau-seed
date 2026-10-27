@@ -10,14 +10,21 @@ The directed tests below are the vectors of SPEC section 6.2. Every test:
 
 Numbers are given for NW = 32 and, where they depend on NW, as formulas. The
 same tests run on RTL and on the gate-level netlist (GATES=yes).
+
+The random tests (SPEC section 6.3) replay the seeded operation streams of
+randgen.py. RTL: 4 seeds x 5000 operations. Gate level: seeds A and B, the
+first 1000 operations (a prefix of the RTL stream). test/expected_tests.json
+lists the names that must show up in results.xml; test/tau_guard.py checks it.
 """
 
 import os
 
 import cocotb
 
+import randgen
 import tau_config
 import vectors
+from model import TauSeedModel
 from tau_driver import (
     LOAD_W,
     NOP,
@@ -33,7 +40,13 @@ NW = tau_config.NW
 N4 = NW // 4  # LOAD_W bytes needed to fill the weight memory
 
 # Test timeout: simulation time, protection against a deadlock only.
+# One operation takes at most 11 clock periods of 1 us, so 5000 operations
+# need at most 55 ms of simulation time.
 TIMEOUT_MS = 200
+
+# Random tests: operations per run
+N_OPS_RTL = 5000
+N_OPS_GL = 1000
 
 
 def pick(nw32, formula):
@@ -375,3 +388,110 @@ async def test_nw_probe(dut):
         fail("nw_probe: SPTR0 did not return to 1 within 40 steps")
     dut._log.info("nw_probe: measured NW = %d, tau_config.NW = %d", count, tau_config.NW)
     assert count == tau_config.NW, "probe says NW = %d, tau_config.NW = %d" % (count, tau_config.NW)
+
+
+# ---------------------------------------------------------------------------
+# Random tests (SPEC section 6.3)
+# ---------------------------------------------------------------------------
+
+async def run_random(dut, name, seed):
+    """Replay gen_ops(seed, n, NW) through the pins.
+
+    Every CMD operation goes through TauDriver.command(), which compares Q at
+    both BSEL values, SAT, SPTR0, ACK, uio_oe and uio_out[4:0] with the
+    mirrored model after the command, and checks that nothing moves while the
+    design waits and during the STROBE-low gap. A RESET operation resets the
+    design (rst_n low for 5 edges, STROBE low, 3 idle edges).
+    """
+    mode = "gl" if GATES else "rtl"
+    n = N_OPS_GL if GATES else N_OPS_RTL
+    ops = randgen.gen_ops(seed, n, NW)
+    assert len(ops) == n, "generator returned %d operations, expected %d" % (len(ops), n)
+    if GATES:
+        # the gate-level run is a prefix of the RTL run for the same seed
+        assert ops == randgen.gen_ops(seed, N_OPS_RTL, NW)[:N_OPS_GL], (
+            "gate-level operations are not a prefix of the RTL operations"
+        )
+
+    # Coverage is counted on the model; every minimum of PLAN 1.4 must hold.
+    cov = randgen.coverage(ops, NW)
+    dut._log.info("%s coverage (%s, NW = %d): %s", name, mode, NW, cov)
+    unmet = randgen.coverage_failures(cov, mode, NW)
+    assert not unmet, "%s: coverage minimums not met: %s" % (name, "; ".join(unmet))
+
+    drv = await new_driver(dut, name)
+    cmds = 0
+    resets = 0
+    hi_seen = 0
+    lo_seen = 0
+    sat_seen = 0
+    for op in ops:
+        if op[0] == "RESET":
+            await drv.reset()
+            resets += 1
+            continue
+        _, code, data, bsel, gap, same = op
+        snap = await drv.command(code, data, gap=gap, same_write=bool(same), bsel=bsel)
+        cmds += 1
+        if snap["acc"] == 32767:
+            hi_seen += 1
+        elif snap["acc"] == -32768:
+            lo_seen += 1
+        sat_seen += snap["sat"]
+
+    # number of executed operations
+    assert cmds + resets == n, "executed %d operations, expected %d" % (cmds + resets, n)
+    assert cmds == cov["cmds"] and resets == cov["resets"], (
+        "executed %d commands and %d resets, generator counted %d and %d"
+        % (cmds, resets, cov["cmds"], cov["resets"])
+    )
+    assert drv.commands == cmds, "driver counted %d commands, test sent %d" % (drv.commands, cmds)
+    # the pins really reached both limits and SAT was seen
+    assert hi_seen >= 1 and lo_seen >= 1, (
+        "the pins never showed +32767 (%d) or -32768 (%d)" % (hi_seen, lo_seen)
+    )
+    assert sat_seen >= 1, "SAT was never seen on the pins"
+    dut._log.info(
+        "%s: %d commands, %d resets, pins showed +32767 %d times, -32768 %d times, "
+        "SAT in %d samples",
+        name, cmds, resets, hi_seen, lo_seen, sat_seen,
+    )
+
+    # final state: pins against an independent replay of the same operations
+    ref = TauSeedModel(NW)
+    for op in ops:
+        if op[0] == "RESET":
+            ref.reset()
+        else:
+            ref.command(op[1], op[2])
+    await drv.read_state(name + " end")
+    drv.expect(
+        name + " end",
+        acc=ref.acc,
+        sat=ref.sat,
+        sptr0=ref.outputs(0)["sptr0"],
+        ack=ref.ack,
+    )
+
+
+@cocotb.test(timeout_time=TIMEOUT_MS, timeout_unit="ms")
+async def test_random_seed_a(dut):
+    await run_random(dut, "random_a", randgen.SEED_A)
+
+
+@cocotb.test(timeout_time=TIMEOUT_MS, timeout_unit="ms")
+async def test_random_seed_b(dut):
+    await run_random(dut, "random_b", randgen.SEED_B)
+
+
+# Seeds C and D run on RTL only. They are defined (not skipped) only when GATES
+# is not "yes", so the gate-level results file holds exactly 22 tests.
+if not GATES:
+
+    @cocotb.test(timeout_time=TIMEOUT_MS, timeout_unit="ms")
+    async def test_random_seed_c(dut):
+        await run_random(dut, "random_c", randgen.SEED_C)
+
+    @cocotb.test(timeout_time=TIMEOUT_MS, timeout_unit="ms")
+    async def test_random_seed_d(dut):
+        await run_random(dut, "random_d", randgen.SEED_D)
