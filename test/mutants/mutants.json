@@ -1,0 +1,255 @@
+{
+  "format": 1,
+  "comment": "Each mutant is a list of exact text edits (find -> replace) on files in src/. Every find must occur exactly once in its file, otherwise run_mutants.py reports the mutant as INVALID (stale). killers: test names (as in expected_tests.json); at least one of them must fail for the mutant to count as KILLED.",
+  "mutants": [
+    {
+      "id": "M00",
+      "description": "control: no change, must pass all 24 RTL tests",
+      "edits": [],
+      "killers": []
+    },
+    {
+      "id": "M01",
+      "description": "no saturation: acc <= s[15:0] (wraps), SAT is never set",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "acc <= ovf ? (s[16] ? 16'h8000 : 16'h7FFF) : s[15:0];",
+          "replace": "acc <= s[15:0];"
+        },
+        {
+          "file": "tau_seed_core.v",
+          "find": "sat <= sat | ovf;",
+          "replace": "sat <= sat;"
+        }
+      ],
+      "killers": [
+        "test_d07_d08_saturate_high",
+        "test_d09_d10_saturate_low",
+        "test_d21_saturation_recovery"
+      ]
+    },
+    {
+      "id": "M02",
+      "description": "weight codes 01 and 11 swapped: 01 -> -1, 11 -> +1",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "wire st_pos = (wcode == 2'b01);",
+          "replace": "wire st_pos = (wcode == 2'b11);"
+        },
+        {
+          "file": "tau_seed_core.v",
+          "find": "wire st_neg = (wcode == 2'b11);",
+          "replace": "wire st_neg = (wcode == 2'b01);"
+        }
+      ],
+      "killers": [
+        "test_d04_all_plus",
+        "test_d05_all_minus",
+        "test_d18_neuron"
+      ]
+    },
+    {
+      "id": "M03",
+      "description": "reserved weight code 10 acts as +1",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "wire st_pos = (wcode == 2'b01);",
+          "replace": "wire st_pos = (wcode == 2'b01) | (wcode == 2'b10);"
+        }
+      ],
+      "killers": [
+        "test_d06_reserved_weight_code"
+      ]
+    },
+    {
+      "id": "M04",
+      "description": "fire = s2: every clock with STROBE high executes the command (no edge detect)",
+      "edits": [
+        {
+          "file": "project.v",
+          "find": "wire fire = s2 & ~p;",
+          "replace": "wire fire = s2;"
+        }
+      ],
+      "killers": [
+        "test_d14_strobe_held_high",
+        "test_d20_handshake_timing"
+      ]
+    },
+    {
+      "id": "M05",
+      "description": "CLEAR keeps the read pointer sptr",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "end else if (cmd_clear) begin\n          sptr <= {SW{1'b0}};",
+          "replace": "end else if (1'b0) begin\n          sptr <= {SW{1'b0}};"
+        }
+      ],
+      "killers": [
+        "test_d13_clear_mid_pass"
+      ]
+    },
+    {
+      "id": "M06",
+      "description": "SAT is not sticky: sat <= ovf",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "sat <= sat | ovf;",
+          "replace": "sat <= ovf;"
+        }
+      ],
+      "killers": [
+        "test_d21_saturation_recovery"
+      ]
+    },
+    {
+      "id": "M07",
+      "description": "SAT (ovf) is also set on the exact limits s = 32767 and s = -32768",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "ovf = s[16] ^ s[15];",
+          "replace": "ovf = (s[16] ^ s[15]) | (s == 17'h07FFF) | (s == 17'h18000);"
+        }
+      ],
+      "killers": [
+        "test_d09_d10_saturate_low",
+        "test_d21_saturation_recovery"
+      ]
+    },
+    {
+      "id": "M08",
+      "description": "LOAD_W packing reversed within the byte: weight 4j+k is taken from DATA[7-2k:6-2k]",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "wbits[8*j +: 8] <= data;",
+          "replace": "wbits[8*j +: 8] <= {data[1:0], data[3:2], data[5:4], data[7:6]};"
+        }
+      ],
+      "killers": [
+        "test_d18_neuron",
+        "test_d13_clear_mid_pass"
+      ]
+    },
+    {
+      "id": "M09",
+      "description": "BSEL inverted: BSEL 0 shows acc[15:8], BSEL 1 shows acc[7:0]",
+      "edits": [
+        {
+          "file": "project.v",
+          "find": "uio_in[4] ? acc[15:8] : acc[7:0]",
+          "replace": "uio_in[4] ? acc[7:0] : acc[15:8]"
+        }
+      ],
+      "killers": [
+        "test_d15_byte_select"
+      ]
+    },
+    {
+      "id": "M10",
+      "description": "x zero-extended instead of sign-extended",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "wire [16:0] x17 = {{9{data[7]}}, data};",
+          "replace": "wire [16:0] x17 = {9'b0, data};"
+        }
+      ],
+      "killers": [
+        "test_d05_all_minus",
+        "test_d07_d08_saturate_high"
+      ]
+    },
+    {
+      "id": "M11",
+      "description": "STEP does not advance sptr when the stored weight is 00",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "end else if (cmd_step) begin",
+          "replace": "end else if (cmd_step & (wcode != 2'b00)) begin"
+        }
+      ],
+      "killers": [
+        "test_d03_zero_weights",
+        "test_d18_neuron"
+      ]
+    },
+    {
+      "id": "M12",
+      "description": "one synchroniser stage removed: s2 <= uio_in[0] (command runs one edge early)",
+      "edits": [
+        {
+          "file": "project.v",
+          "find": "s2 <= s1;",
+          "replace": "s2 <= uio_in[0];"
+        }
+      ],
+      "killers": [
+        "test_d20_handshake_timing"
+      ]
+    },
+    {
+      "id": "M13",
+      "description": "CLEAR also clears the stored weights",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "end else if (cmd_load) begin\n          for (j = 0;",
+          "replace": "end else if (cmd_clear) begin\n          wbits <= {(2 * NW) {1'b0}};\n        end else if (cmd_load) begin\n          for (j = 0;"
+        }
+      ],
+      "killers": [
+        "test_d13_clear_mid_pass"
+      ]
+    },
+    {
+      "id": "M14",
+      "description": "no ACK toggle on the reserved codes 6 and 7",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "end else if (fire) begin",
+          "replace": "end else if (fire & (cmd < 3'd6)) begin"
+        }
+      ],
+      "killers": [
+        "test_d16_nop_and_reserved"
+      ]
+    },
+    {
+      "id": "M15",
+      "description": "reset leaves the stored weights unchanged",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "wbits <= {(2 * NW) {1'b0}};",
+          "replace": "wbits <= wbits;"
+        }
+      ],
+      "killers": [
+        "test_d17_reset_mid_pass"
+      ]
+    },
+    {
+      "id": "M16",
+      "description": "CLEAR keeps the load pointer lptr (D13 ends at 1906 instead of 1687)",
+      "edits": [
+        {
+          "file": "tau_seed_core.v",
+          "find": "end else if (cmd_clear) begin\n          lptr <= {LW{1'b0}};",
+          "replace": "end else if (1'b0) begin\n          lptr <= {LW{1'b0}};"
+        }
+      ],
+      "killers": [
+        "test_d13_clear_mid_pass"
+      ]
+    }
+  ]
+}

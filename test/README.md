@@ -61,3 +61,19 @@ The last line of a good RTL run is `tau_guard: PASS mode=rtl tests=24/24`. With 
 Run `cd test && make`, not `make -C test`: the Makefile uses `$(PWD)`.
 
 The pytest checks of the guard run with `python -m pytest -q test/test_tau_guard.py`.
+
+## Mutants
+
+`mutants/run_mutants.py` checks that the tests can fail. It runs the 24 RTL tests against the unmutated
+design (M00, the control) and against 16 deliberately broken copies of `src/` (M01 to M16, edits listed
+in [mutants/mutants.json](mutants/mutants.json)). Each mutant must be killed by one of the tests named
+for it. A mutant that does not apply, or that produces no complete `results.xml`, is INVALID, not killed.
+
+```sh
+python3 test/mutants/run_mutants.py --work /tmp/mutants
+```
+
+The runner copies `src/` and `test/` to `<work>/<id>/`, edits the copy, and runs `make sim WAVES=0` there
+with `PWD` set to the copy. It never writes to `src/` and checks the sha256 of every file in `src/` before
+and after the run. The last line of a good run is `M00 PASS; 16/16 KILLED`. It needs `make`, `iverilog`
+and `cocotb-config` on `PATH`, with the directory of the running python first.
