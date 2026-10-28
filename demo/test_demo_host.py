@@ -5,7 +5,7 @@
 The demo runs against MockTT (demo/mock_tt.py), which is backed by the cycle
 model of the chip (test/model.py) and raises ProtocolError when the host
 breaks a rule of docs/info.md. Expected numbers are written out here from the
-specification, not computed by the demo.
+datasheet, not computed by the demo.
 Run:  cd <repo> && python -B -m pytest -q demo/test_demo_host.py
 """
 
@@ -125,14 +125,20 @@ def test_reset_order_and_single_stepping():
     assert ("stop",) not in ev[1:]  # no later clock changes
 
 
-@pytest.mark.parametrize(
-    "kind, reason",
-    [
-        ("sign", "D18 (a) STEP 0: acc -105 SAT 0, expected acc 105 SAT 0"),
-        ("stuck_ack", "no ACK within 8 clocks (cmd 1)"),
-        ("swap_bytes", "D18 (a) STEP 0: acc 26880 SAT 0, expected acc 105 SAT 0"),
-    ],
-)
+# (kind of the broken chip, the reason the demo must print after "TAU SEED DEMO: FAIL ")
+BROKEN_CASES = [
+    ("sign", "D18 (a) STEP 0: acc -105 SAT 0, expected acc 105 SAT 0"),
+    ("stuck_ack", "no ACK within 8 clocks (cmd 1)"),
+    ("swap_bytes", "D18 (a) STEP 0: acc 26880 SAT 0, expected acc 105 SAT 0"),
+    # one case per comparison of the demo's check(): SAT, SPTR0, ACK level, flags stable over BSEL
+    ("sat_never_set", "D8 result: acc 32767 SAT 0, expected acc 32767 SAT 1"),
+    ("sptr0_stuck", "D18 (a) STEP 0: SPTR0 1, expected 0"),
+    ("extra_ack", "after reset: ACK 1, expected 0"),
+    ("flags_follow_bsel", "SAT/SPTR0/ACK changed with BSEL"),
+]
+
+
+@pytest.mark.parametrize("kind, reason", BROKEN_CASES)
 def test_broken_mock_fails(kind, reason, capsys):
     tt = BrokenMock(kind)
     ok = tau_seed_demo.run(tt)  # must not raise
@@ -146,7 +152,15 @@ def test_broken_mock_fails(kind, reason, capsys):
 
 
 def test_broken_mock_kinds():
-    assert BrokenMock.KINDS == ("sign", "stuck_ack", "swap_bytes")
+    assert BrokenMock.KINDS == (
+        "extra_ack",
+        "flags_follow_bsel",
+        "sat_never_set",
+        "sign",
+        "sptr0_stuck",
+        "stuck_ack",
+        "swap_bytes",
+    )
     with pytest.raises(ValueError):
         BrokenMock("no_such_fault")
 
@@ -182,11 +196,91 @@ def test_main_enables_project_and_sets_mode(capsys):
     assert "ttboard" not in sys.modules and "ttboard.mode" not in sys.modules
 
 
+def test_every_broken_mock_kind_has_a_failing_case():
+    # the cases of test_broken_mock_fails cover all kinds, each once
+    assert sorted(k for k, _ in BROKEN_CASES) == sorted(BrokenMock.KINDS)
+
+
+def test_good_mock_flags_do_not_depend_on_bsel():
+    # the check that the broken mock "flags_follow_bsel" trips is not tripped by the good chip
+    tt = MockTT()
+    bring_up(tt)
+    send(tt, 4, 5)
+    flags = []
+    for bsel in (0, 1, 0):
+        tt.uio_in.value = bsel << 4
+        flags.append(tt.uio_out.value & 0xE0)
+    assert flags[0] == flags[1] == flags[2]
+
+
 def test_without_rp_control_mode_the_demo_fails(capsys):
     tt = MockTT(prepared=False)
     tt.shuttle.tt_um_ternara_tau_seed.enable()  # enabled, but ui_in is not driven
     assert tau_seed_demo.run(tt) is False
     assert capsys.readouterr().out.splitlines()[-1].startswith("TAU SEED DEMO: FAIL ")
+
+
+class _NoDesignShuttle(object):
+    """A shuttle list without the design (a firmware release that predates the shuttle)."""
+
+    def __getattr__(self, name):
+        raise AttributeError("no such design: " + name)
+
+
+class _ModeRefused(MockTT):
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        raise RuntimeError("mode switch refused")
+
+
+class _ClockFails(MockTT):
+    def clock_project_once(self, msDelay=0):
+        if self.edges >= 5:
+            raise OSError("pulse failed")
+        MockTT.clock_project_once(self, msDelay)
+
+
+def _main_fail_line(tt, capsys):
+    with mock_tt.fake_ttboard(tt):
+        ok = tau_seed_demo.main()  # must not raise
+    lines = capsys.readouterr().out.splitlines()
+    assert ok is False
+    assert sum(1 for ln in lines if ln.startswith("TAU SEED DEMO:")) == 1
+    assert not any("PASS" in ln for ln in lines)
+    return lines[-1]
+
+
+def test_main_without_the_design_in_the_shuttle_fails(capsys):
+    tt = MockTT(prepared=False)
+    tt.shuttle = _NoDesignShuttle()
+    assert _main_fail_line(tt, capsys) == (
+        "TAU SEED DEMO: FAIL setup: AttributeError('no such design: tt_um_ternara_tau_seed')"
+    )
+    assert tt.calls == [("get",)]  # stopped before the mode was set
+
+
+def test_main_other_board_errors_end_in_a_fail_line(capsys):
+    tt = _ModeRefused(prepared=False)
+    assert _main_fail_line(tt, capsys) == "TAU SEED DEMO: FAIL setup: RuntimeError('mode switch refused')"
+    # an error from the board in the middle of the run
+    tt = _ClockFails(prepared=False)
+    assert _main_fail_line(tt, capsys) == "TAU SEED DEMO: FAIL setup: OSError('pulse failed')"
+    assert tt.uio_in.value == 0 and tt.ui_in.value == 0  # pins left idle
+
+
+def test_main_without_the_sdk_fails(capsys, monkeypatch):
+    # a None entry in sys.modules makes `import ttboard...` raise ImportError, as on a computer
+    for name in ("ttboard", "ttboard.demoboard", "ttboard.mode"):
+        monkeypatch.setitem(sys.modules, name, None)
+    ok = tau_seed_demo.main()  # must not raise
+    lines = capsys.readouterr().out.splitlines()
+    assert ok is False
+    assert len(lines) == 1 and lines[0].startswith("TAU SEED DEMO: FAIL setup: ")
+    assert "ttboard" in lines[0]
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +474,26 @@ def test_docs_numbers_match_the_demo():
     assert " ".join("%02X" % b for b in tau_seed_demo.D18_NEG_BYTES) in text
     assert "2099 (`0x0833`)" in text and "-2099 (`0xF7CD`)" in text
     assert "`tau_guard: PASS mode=rtl tests=24/24`" in text
-    assert re.search(r"NW = 32 ternary weights", text)
+    assert re.search(r"NW = %d ternary weights" % tau_seed_demo.NW, text)
     assert text.isascii()
+
+
+def test_docs_host_rules_and_demo_board_notes():
+    text = _docs_text()
+    # host rule: a free-running clock needs one clock period between ACK and the read
+    sentence = (
+        "With a free-running clock, read `Q` (and change `BSEL`) at least one clock period "
+        "after `ACK` is seen."
+    )
+    assert text.count(sentence) == 1
+    # the demo board needs a firmware release that lists this shuttle
+    assert text.count("The board needs a firmware release whose shuttle list includes TTSKY26d.") == 1
+    # the three template headings stay
+    assert [ln for ln in text.splitlines() if ln.startswith("## ")] == [
+        "## How it works",
+        "## How to test",
+        "## External hardware",
+    ]
 
 
 # ---------------------------------------------------------------------------

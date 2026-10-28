@@ -9,7 +9,8 @@
 #     tau_seed_demo.main()
 #
 # It prints one line, `TAU SEED DEMO: PASS` or `TAU SEED DEMO: FAIL <reason>`,
-# and main() returns True or False.
+# and main() returns True or False. An exception from the board SDK is reported
+# as `TAU SEED DEMO: FAIL setup: <exception>`.
 #
 # The demo follows the host rules of docs/info.md:
 #   * the clock is single-stepped (clock_project_once), never a PWM clock;
@@ -332,13 +333,19 @@ def run(tt):
 
 
 def main():
-    from ttboard.demoboard import DemoBoard
-    from ttboard.mode import RPMode
+    # An SDK or hardware exception (no such design in the shuttle list, a board
+    # that does not answer) ends in a FAIL line as well, not in a traceback.
+    try:
+        from ttboard.demoboard import DemoBoard
+        from ttboard.mode import RPMode
 
-    tt = DemoBoard.get()
-    tt.shuttle.tt_um_ternara_tau_seed.enable()
-    tt.mode = RPMode.ASIC_RP_CONTROL
-    return run(tt)
+        tt = DemoBoard.get()
+        tt.shuttle.tt_um_ternara_tau_seed.enable()
+        tt.mode = RPMode.ASIC_RP_CONTROL
+        return run(tt)
+    except Exception as e:
+        print("TAU SEED DEMO: FAIL setup: " + repr(e))
+        return False
 
 
 if __name__ == "__main__":

@@ -35,9 +35,12 @@ ProtocolError is raised when the host breaks a rule of docs/info.md:
 * the RP drives uio[7:5], which the chip drives;
 * the clock is pulsed before the project is enabled.
 
-BrokenMock(kind) is a chip with one fault: "sign" (every weight acts with the
-wrong sign), "stuck_ack" (ACK never toggles), "swap_bytes" (BSEL selects the
-other Q byte). The demo must report FAIL for each, without raising.
+BrokenMock(kind) is a chip with one fault (see BrokenMock.KINDS): "sign" (every
+weight acts with the wrong sign), "stuck_ack" (ACK never toggles), "swap_bytes"
+(BSEL selects the other Q byte), "sat_never_set" (SAT stays 0), "sptr0_stuck"
+(SPTR0 stays 1), "extra_ack" (ACK is already 1 after reset) and
+"flags_follow_bsel" (the flag pins change when BSEL changes). The demo must
+report FAIL for each, without raising.
 """
 
 import contextlib
@@ -97,10 +100,50 @@ class _SwapBytesModel(TauSeedModel):
         return TauSeedModel.outputs(self, 0 if bsel else 1)
 
 
+class _SatNeverSetModel(TauSeedModel):
+    """SAT stays 0, whatever the accumulator does."""
+
+    def command(self, cmd, data):
+        TauSeedModel.command(self, cmd, data)
+        self.sat = 0
+
+
+class _Sptr0StuckModel(TauSeedModel):
+    """SPTR0 reads 1 all the time, so it does not show the read pointer moving."""
+
+    def outputs(self, bsel):
+        out = TauSeedModel.outputs(self, bsel)
+        out["sptr0"] = 1
+        out["uio_out"] |= 0x40
+        return out
+
+
+class _ExtraAckModel(TauSeedModel):
+    """One ACK toggle too many: ACK is 1 after reset, before any command has run."""
+
+    def reset(self):
+        TauSeedModel.reset(self)
+        self.ack = 1
+
+
+class _FlagsFollowBselModel(TauSeedModel):
+    """With BSEL = 1 the flag pins uio[7:5] show acc[15:13] instead of ACK, SPTR0, SAT."""
+
+    def outputs(self, bsel):
+        out = TauSeedModel.outputs(self, bsel)
+        if bsel:
+            out["uio_out"] = (out["uio_out"] & 0x1F) | (((self.acc & 0xFFFF) >> 8) & 0xE0)
+        return out
+
+
 _FAULTS = {
     "sign": _SignFlippedModel,
     "stuck_ack": _StuckAckModel,
     "swap_bytes": _SwapBytesModel,
+    "sat_never_set": _SatNeverSetModel,
+    "sptr0_stuck": _Sptr0StuckModel,
+    "extra_ack": _ExtraAckModel,
+    "flags_follow_bsel": _FlagsFollowBselModel,
 }
 
 
@@ -270,7 +313,8 @@ class MockTT(object):
         return self.cyc.model.outputs(bsel)["q"]
 
     def _read_uio_out(self):
-        chip = self.cyc.model.outputs(0)["uio_out"] & 0xE0
+        bsel = (self._asic_uio() >> 4) & 1
+        chip = self.cyc.model.outputs(bsel)["uio_out"] & 0xE0
         return chip | (self._uio & self._oe_pico & 0x1F)
 
     # -- the SDK calls the demo uses -------------------------------------
@@ -330,7 +374,7 @@ class MockTT(object):
 
 
 class BrokenMock(MockTT):
-    """A MockTT whose chip has one fault: kind is "sign", "stuck_ack" or "swap_bytes"."""
+    """A MockTT whose chip has one fault: kind is one of KINDS (see the module docstring)."""
 
     KINDS = tuple(sorted(_FAULTS))
 

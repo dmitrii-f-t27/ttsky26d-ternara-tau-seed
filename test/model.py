@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""Reference model of the Ternara tau seed (SPEC v0.2).
+"""Reference model of the Ternara tau seed (docs/info.md).
 
 Two layers:
 
@@ -13,7 +13,7 @@ Pure Python, standard library only. It must also run under CPython for the
 demo mock, so it keeps to plain integers and lists.
 """
 
-# Command codes (SPEC section 3)
+# Command codes (docs/info.md, Commands)
 NOP = 0
 CLEAR = 1
 LOAD_W = 2

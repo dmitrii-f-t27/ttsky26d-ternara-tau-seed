@@ -2,8 +2,8 @@
 # Copyright (c) 2026 Dmitrii Fedorov
 """pytest checks for model.py, vectors.py and randgen.py.
 
-Expected numbers are written out here from the specification (SPEC v0.2
-section 6) and are not computed by the model under test.
+Expected numbers are written out here from the datasheet (docs/info.md) and
+are not computed by the model under test.
 Run:  cd <repo> && python -B -m pytest -q test/test_model.py
 """
 
@@ -20,7 +20,7 @@ import tau_config  # noqa: E402
 import vectors  # noqa: E402
 from model import TauSeedCycle, TauSeedModel, dec, mac, pack_uio_in, to_s8  # noqa: E402
 
-# Command codes, written out from SPEC section 3 (not imported from model.py).
+# Command codes, written out from docs/info.md, Commands (not imported from model.py).
 NOP, CLEAR, LOAD_W, STEP, STEP_POS, STEP_NEG = 0, 1, 2, 3, 4, 5
 
 D18_BYTES_SPEC = [0xD3, 0x34, 0x4D, 0xD3, 0x34, 0x4D, 0xD3, 0x34]
@@ -605,7 +605,7 @@ GOLDEN = {
     0x7A050004: "10f6049d6bc8233b857ceb0cae458063a51163efea7e2e08b03c9d91b36c5c3b",
 }
 
-# Coverage minimums from PLAN 1.4, written out here.
+# Coverage minimums, written out here (not imported from randgen.COVERAGE_MIN).
 MIN_RTL = {"over_hi": 3, "over_lo": 3, "exact_hi": 2, "exact_lo": 2,
            "sptr_wraps": 3, "lptr_wraps": 3, "each_code": 10, "clear": 20,
            "resets": 1, "step_code10": 10}

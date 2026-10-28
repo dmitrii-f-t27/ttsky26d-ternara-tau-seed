@@ -6,7 +6,7 @@
 `default_nettype none
 
 // Ternara tau seed core: a streaming int8 x ternary MAC with a saturating
-// 16-bit accumulator, plus NW stored ternary weights (SPEC sections 1 and 3).
+// 16-bit accumulator, plus NW stored ternary weights (docs/info.md, How it works).
 //
 // NW is 32, 16 or 0. Any other value fails elaboration (g_bad below).
 // With NW = 0 there is no weight memory and no pointer: STEP and LOAD_W act
@@ -28,7 +28,7 @@ module tau_seed_core #(
 );
 
   // ---------------------------------------------------------------------
-  // Command decode (SPEC section 3). Every strobe includes fire.
+  // Command decode (docs/info.md, Commands). Every strobe includes fire.
   // ---------------------------------------------------------------------
   wire cmd_clear = fire & (cmd == 3'd1);
   wire cmd_load  = fire & (cmd == 3'd2);

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""Guard against a false green simulation (SPEC section 6.4).
+"""Guard against a false green simulation (docs/info.md, How to test).
 
 TT's own gate-level job only checks that results.xml exists and holds no
 <failure> or <error>. A run with zero tests, a renamed test, a duplicated test

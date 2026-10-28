@@ -7,8 +7,8 @@ command line (exit code and the single output line) as the Makefile uses it.
 The gate-level name set is covered by a synthetic gl results file, because a
 real gate-level run needs the sky130 netlist and happens only in CI.
 
-Names and counts are written out here from SPEC section 6.2 and 6.3; they are
-not read from expected_tests.json, which is under test.
+Names and counts are written out here; they are not read from
+expected_tests.json, which is under test.
 Run:  cd <repo> && python -B -m pytest -q test/test_tau_guard.py
 """
 
@@ -126,7 +126,8 @@ def assert_fail(res, *needles):
 
 
 # ---------------------------------------------------------------------------
-# the 11 cases of the plan (WP4)
+# the basic cases: good runs, no tests, missing file, failed / errored / skipped
+# tests, wrong names, wrong mode
 # ---------------------------------------------------------------------------
 
 def test_case_good_rtl(tmp_path):
@@ -408,10 +409,22 @@ def make_tree(
     hz=25000000,
     top="tt_um_ternara_tau_seed",
     project_extra="",
+    docs=True,
+    docs_nw=None,
+    docs_mhz=None,
+    docs_text=None,
 ):
-    """A synthetic repository tree with just the files tau_check_config.py reads."""
+    """A synthetic repository tree with just the files tau_check_config.py reads.
+
+    docs      write docs/info.md; by default it names `nw` and `hz // 1e6` MHz
+    docs_nw   NW named in the datasheet instead of `nw`
+    docs_mhz  MHz named in the datasheet instead of `hz // 1000000`
+    docs_text the whole datasheet text, instead of the generated one
+    """
     cfg_nw = nw if cfg_nw is None else cfg_nw
     demo_nw = nw if demo_nw is None else demo_nw
+    docs_nw = nw if docs_nw is None else docs_nw
+    docs_mhz = hz // 1000000 if docs_mhz is None else docs_mhz
     (root / "src").mkdir()
     (root / "test").mkdir()
     (root / "src" / "project.v").write_text(
@@ -427,6 +440,16 @@ def make_tree(
     if demo_dir:
         (root / "demo").mkdir()
         (root / "demo" / "tau_seed_demo.py").write_text("# demo\nNW = %d\n" % demo_nw)
+    if docs:
+        (root / "docs").mkdir()
+        if docs_text is None:
+            docs_text = (
+                "## How it works\n\n"
+                "- Stored weights: an on-chip memory of NW = %d ternary weights.\n"
+                "The pointer wraps after NW steps.\n\n"
+                "The target clock is %d MHz.\n" % (docs_nw, docs_mhz)
+            )
+        (root / "docs" / "info.md").write_text(docs_text)
     return root
 
 
@@ -444,7 +467,7 @@ def fresh(tmp_path, name, **kw):
 def test_config_good_tree(tmp_path):
     problems, values = cfg_problems(make_tree(tmp_path))
     assert problems == []
-    assert values == {"NW": 32, "demo": 32, "CLOCK_PERIOD": 40, "clock_hz": 25000000}
+    assert values == {"NW": 32, "demo": 32, "CLOCK_PERIOD": 40, "clock_hz": 25000000, "docs": "NW32/25MHz"}
 
 
 @pytest.mark.parametrize("nw", [0, 16, 32])
@@ -531,17 +554,88 @@ def test_config_clock_hz_zero_fails_once_info_yaml_is_ours(tmp_path):
 
 
 def test_config_missing_files_fail(tmp_path):
-    for name in ("src/project.v", "test/tau_config.py", "src/config.json", "info.yaml"):
+    for name in ("src/project.v", "test/tau_config.py", "src/config.json", "info.yaml", "docs/info.md"):
         root = fresh(tmp_path, name.replace("/", "_"))
         os.remove(str(root / name))
         problems, _ = cfg_problems(root)
         assert any("cannot read" in p for p in problems), name
 
 
+# --- the datasheet (docs/info.md) -------------------------------------------
+
+@pytest.mark.parametrize("nw", [0, 16, 32])
+def test_config_docs_follow_nw(tmp_path, nw):
+    problems, values = cfg_problems(make_tree(tmp_path, nw=nw))
+    assert problems == []
+    assert values["docs"] == "NW%d/25MHz" % nw
+
+
+def test_config_docs_nw_must_agree(tmp_path):
+    root = make_tree(tmp_path, nw=32, docs_nw=16)
+    problems, _ = cfg_problems(root)
+    assert any("docs/info.md says NW = 16 but src/project.v NW = 32" in p for p in problems), problems
+    # the other NW mentions of the datasheet are checked too, not just the headline one
+    other = fresh(tmp_path, "other", docs_text=(
+        "NW = 32 ternary weights. The pointer wraps after NW steps (NW = 16 in the small build).\n"
+        "The target clock is 25 MHz.\n"
+    ))
+    problems, _ = cfg_problems(other)
+    assert any("docs/info.md mentions NW = 16 but src/project.v NW = 32" in p for p in problems), problems
+
+
+def test_config_docs_nw_follows_project_v(tmp_path):
+    # RTL changed to 16, datasheet still says 32
+    problems, _ = cfg_problems(make_tree(tmp_path, nw=16, docs_nw=32))
+    assert any("docs/info.md says NW = 32 but src/project.v NW = 16" in p for p in problems), problems
+
+
+def test_config_docs_exactly_one_nw_sentence(tmp_path):
+    two = fresh(tmp_path, "two", docs_text=(
+        "NW = 32 ternary weights, and again NW = 32 ternary weights.\nThe target clock is 25 MHz.\n"))
+    problems, _ = cfg_problems(two)
+    assert any("NW = <n> ternary weights" in p and "found 2" in p for p in problems), problems
+    none = fresh(tmp_path, "none", docs_text="The target clock is 25 MHz.\nNW = 32 weights.\n")
+    problems, _ = cfg_problems(none)
+    assert any("NW = <n> ternary weights" in p and "found 0" in p for p in problems), problems
+
+
+def test_config_docs_clock_must_agree(tmp_path):
+    problems, _ = cfg_problems(make_tree(tmp_path, docs_mhz=10))
+    assert any("target clock is 10 MHz but info.yaml clock_hz = 25000000" in p for p in problems), problems
+    # 100 ns / 10 MHz in the files, 25 MHz left in the datasheet
+    problems, _ = cfg_problems(fresh(tmp_path, "slow", period=100, hz=10000000, docs_mhz=25))
+    assert any("target clock is 25 MHz but info.yaml clock_hz = 10000000" in p for p in problems), problems
+    # the datasheet follows the files
+    problems, values = cfg_problems(fresh(tmp_path, "slow_ok", period=100, hz=10000000))
+    assert problems == [] and values["docs"] == "NW32/10MHz"
+
+
+def test_config_docs_exactly_one_clock_sentence(tmp_path):
+    two = fresh(tmp_path, "two", docs_text=(
+        "NW = 32 ternary weights.\nThe target clock is 25 MHz. The target clock is 25 MHz.\n"))
+    problems, _ = cfg_problems(two)
+    assert any("The target clock is <m> MHz" in p and "found 2" in p for p in problems), problems
+    none = fresh(tmp_path, "none", docs_text="NW = 32 ternary weights.\nThe clock is 25 MHz.\n")
+    problems, _ = cfg_problems(none)
+    assert any("The target clock is <m> MHz" in p and "found 0" in p for p in problems), problems
+
+
+def test_config_docs_clock_is_not_compared_for_the_template_info_yaml(tmp_path):
+    root = make_tree(tmp_path, top="tt_um_example", hz=0, docs_mhz=25)
+    problems, values = cfg_problems(root)
+    assert problems == []
+    assert values["clock_hz"].startswith("SKIPPED") and values["docs"] == "NW32/25MHz"
+    # but the sentence has to be there exactly once
+    problems, _ = cfg_problems(fresh(tmp_path, "nosentence", top="tt_um_example", hz=0,
+                                     docs_text="NW = 32 ternary weights.\n"))
+    assert any("The target clock is <m> MHz" in p for p in problems), problems
+
+
 def test_config_real_repository_is_consistent():
     problems, values = tau_check_config.check(REPO)
     assert problems == [], problems
     assert values["NW"] == 32 and values["CLOCK_PERIOD"] == 40
+    assert values["docs"] == "NW32/25MHz"
 
 
 def test_config_cli_on_real_repository():
@@ -550,6 +644,7 @@ def test_config_cli_on_real_repository():
     lines = proc.stdout.splitlines()
     assert len(lines) == 1
     assert lines[0].startswith("tau_check_config: PASS NW=32 CLOCK_PERIOD=40 clock_hz=")
+    assert lines[0].endswith(" docs=NW32/25MHz")
 
 
 def test_config_cli_failure_exit_code(tmp_path):

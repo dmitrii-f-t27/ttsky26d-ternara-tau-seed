@@ -10,7 +10,7 @@ One multiply-accumulate (MAC) does three things:
 
 The weight comes from one of two places:
 
-- Stored weights: an on-chip memory of NW = 32 ternary weights, loaded four per byte by `LOAD_W`. `STEP` uses the weight at the read pointer, then advances the pointer. The pointer wraps after 32 steps.
+- Stored weights: an on-chip memory of NW = 32 ternary weights, loaded four per byte by `LOAD_W`. `STEP` uses the weight at the read pointer, then advances the pointer. The pointer wraps after NW steps.
 - Streamed weights: `STEP_POS` and `STEP_NEG` apply `w = +1` and `w = -1` directly. They ignore the memory and do not move the pointer.
 
 Weight code, 2 bits per weight:
@@ -22,7 +22,7 @@ Weight code, 2 bits per weight:
 | `11` | -1 |
 | `10` | reserved, acts as 0 |
 
-`LOAD_W` writes one byte of four weights: weight 4j+k of byte j sits in `DATA[2k+1:2k]`. The load pointer wraps after 8 bytes. A `STEP` with weight 0 still advances the read pointer.
+`LOAD_W` writes one byte of four weights: weight 4j+k of byte j sits in `DATA[2k+1:2k]`. The load pointer wraps after NW/4 bytes. A `STEP` with weight 0 still advances the read pointer.
 
 ### Commands
 
@@ -63,11 +63,11 @@ Host rules:
 2. Keep `CMD` and `DATA` unchanged until `ACK` has toggled. Allow at most 8 clock edges.
 3. Lower `STROBE`. Keep it low for at least 3 clock edges before the next rise.
 4. `Q`, `SAT`, `SPTR0` and `ACK` are valid after the edge that executed the command.
-5. The clock may run freely or be single-stepped.
+5. The clock may run freely or be single-stepped. With a free-running clock, read `Q` (and change `BSEL`) at least one clock period after `ACK` is seen.
 6. To reset: stop any PWM clock, hold `rst_n` low for at least 2 clock edges with `STROBE` low, then release.
 7. After `rst_n` rises, keep `STROBE` low for at least 3 clock edges.
 
-Reset clears `acc`, `SAT`, both pointers, `ACK` and all 32 stored weights. The reset needs clock edges because it is synchronous. A `STROBE` that is high through reset, or high at the first edges after release, never fires: the first command needs a low-to-high transition seen after reset.
+Reset clears `acc`, `SAT`, both pointers, `ACK` and all NW stored weights. The reset needs clock edges because it is synchronous. A `STROBE` that is high through reset, or high at the first edges after release, never fires: the first command needs a low-to-high transition seen after reset.
 
 ## How to test
 
@@ -79,14 +79,14 @@ pip install -r requirements.txt
 make
 ```
 
-This needs Icarus Verilog. `make` checks that `NW`, the clock period and `clock_hz` agree, runs the cocotb tests on the RTL, and then runs a guard that fails unless exactly the 24 expected tests ran and none failed, errored or was skipped. A good run ends with `tau_guard: PASS mode=rtl tests=24/24`.
+This needs Icarus Verilog. `make` checks that `NW`, the clock period, `clock_hz` and this datasheet agree, runs the cocotb tests on the RTL, and then runs a guard that fails unless exactly the 24 expected tests ran and none failed, errored or was skipped. A good run ends with `tau_guard: PASS mode=rtl tests=24/24`.
 
 The tests drive only the top-level pins. After every command they read `Q` at `BSEL` 0 and 1, `SAT`, `SPTR0`, `ACK` and `uio_oe`, and compare them with a Python model (`test/model.py`). They also check that no output changes while the host waits for `ACK` or holds `STROBE` low, and that every read is free of X and Z. Some of the directed vectors:
 
 | Test | Result |
 |---|---|
-| 8 x `LOAD_W` with `0x55` (all weights +1), then 32 x `STEP` with x = 127 | acc = 4064 |
-| 8 x `LOAD_W` with `0xFF` (all weights -1), then 32 x `STEP` with x = -128 | acc = 4096 |
+| NW/4 x `LOAD_W` with `0x55` (all weights +1), then NW x `STEP` with x = 127 | acc = 127 x NW, which is 4064 for NW = 32 |
+| NW/4 x `LOAD_W` with `0xFF` (all weights -1), then NW x `STEP` with x = -128 | acc = 128 x NW, which is 4096 for NW = 32 |
 | 255 x `STEP_NEG` with x = -128, then one more | 32640 with `SAT` 0, then 32767 with `SAT` 1 |
 | 256 x `STEP_POS` with x = -128, then one more | -32768 with `SAT` 0, then -32768 with `SAT` 1 |
 | 9 x `STEP_POS` with x = -128, then `STEP_POS` with x = -82 | acc = -1234: `Q` = `0x2E` at `BSEL` 0, `0xFB` at `BSEL` 1 |
@@ -103,12 +103,12 @@ w[i] = (i mod 3) - 1
 x[i] = 100*w[i] + ((5*i) mod 11) - 5
 ```
 
-The weights packed for `LOAD_W` are `D3 34 4D D3 34 4D D3 34`; the negated weights are `71 1C C7 71 1C C7 71 1C`. The expected sums are:
+The weights packed for `LOAD_W` are `D3 34 4D D3 34 4D D3 34`; the negated weights are `71 1C C7 71 1C C7 71 1C`. For NW = 32 a stored run is 8 x `LOAD_W` with these bytes, then 32 x `STEP` with x[i]. The expected sums are:
 
 | Run | acc | `Q` at `BSEL` 0 / 1 |
 |---|---|---|
-| after reset: 8 x `LOAD_W` with the weights, then 32 x `STEP` | 2099 (`0x0833`) | `0x33` / `0x08` |
-| `CLEAR`, 8 x `LOAD_W` with the negated weights, 32 x `STEP` | -2099 (`0xF7CD`) | `0xCD` / `0xF7` |
+| after reset: stored run with the weights | 2099 (`0x0833`) | `0x33` / `0x08` |
+| `CLEAR`, stored run with the negated weights | -2099 (`0xF7CD`) | `0xCD` / `0xF7` |
 | `CLEAR`, then streamed weights: `STEP_POS` for +1, `STEP_NEG` for -1, no command for 0 | 2099 | `0x33` / `0x08` |
 
 ### Demo board
@@ -120,7 +120,7 @@ import tau_seed_demo
 tau_seed_demo.main()
 ```
 
-The script enables `tt_um_ternara_tau_seed`, puts the microcontroller in `ASIC_RP_CONTROL` mode so that it drives `ui_in`, and sets `uio_oe_pico` to `0x1F` so that it drives `uio[4:0]`. It stops the clock, resets the chip with single clock pulses, then runs the D18 vector three ways (stored, negated, streamed) and the saturation sequence of 255 steps and one more. It follows the host rules above and waits at most 8 clock pulses for each `ACK`. The last line it prints is `TAU SEED DEMO: PASS`, or `TAU SEED DEMO: FAIL` with a reason.
+The board needs a firmware release whose shuttle list includes TTSKY26d. The script enables `tt_um_ternara_tau_seed`, puts the microcontroller in `ASIC_RP_CONTROL` mode so that it drives `ui_in`, and sets `uio_oe_pico` to `0x1F` so that it drives `uio[4:0]`. It stops the clock, resets the chip with single clock pulses, then runs the D18 vector three ways (stored, negated, streamed) and the saturation sequence of 255 steps and one more. It follows the host rules above and waits at most 8 clock pulses for each `ACK`. The last line it prints is `TAU SEED DEMO: PASS`, or `TAU SEED DEMO: FAIL` with a reason.
 
 Keep all input DIP switches of the demo board off while the microcontroller drives `ui_in`.
 

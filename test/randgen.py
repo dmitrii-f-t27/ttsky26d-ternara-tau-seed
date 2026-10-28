@@ -12,7 +12,7 @@ Operations:
     ("CMD", code, data, bsel, gap, same_write)
     ("RESET",)
 
-Modes (PLAN 1.4):
+Modes (the coverage minimums that the streams must meet are in COVERAGE_MIN):
     MIX   STEP 30 %, STEP_POS 15 %, STEP_NEG 15 %, LOAD_W 15 %, CLEAR 5 %,
           codes 0/6/7 6 % in total, the remaining 14 % spread over all codes.
           x is uniform with 10 % extremes (127, -127, -128).
@@ -36,7 +36,7 @@ fixed seeds (and for other seeds with margin):
         60 MIX operations and no RESET is drawn, so the first 1000 operations
         visit both limits. After that a phase starts with probability 1/200
         per MIX operation and RESET has probability 1/1500 per operation.
-    R5  Push size is uniform in 96..128 (inside the plan's |x| >= 64 band).
+    R5  Push size is uniform in 96..128 (so a push always has |x| >= 64).
         STEP is used in 3 of 4 pushes whenever the next stored weight allows;
         when that weight is 0 / reserved, 1 push in 6 is a STEP that only
         advances sptr (so pointer wraps happen inside a phase).

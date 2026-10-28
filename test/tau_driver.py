@@ -6,7 +6,7 @@ The driver touches only the top-level ports: clk, rst_n, ena, ui_in, uio_in,
 uo_out, uio_out, uio_oe. It never looks inside the design, so the same tests
 run on RTL and on the gate-level netlist.
 
-Timing rules (SPEC section 6.1):
+Timing rules of the driver (the handshake itself is in docs/info.md, Handshake):
     * 1 us clock. Inputs change only at a falling edge (right after it).
     * Outputs are sampled 250 ns after a falling edge, i.e. at least 250 ns
       after the last input change and before the next rising edge.
@@ -34,7 +34,7 @@ from cocotb.triggers import FallingEdge, RisingEdge, Timer
 import tau_config
 from model import UIO_OE, TauSeedModel, pack_uio_in, to_s16
 
-# Command codes (SPEC section 3)
+# Command codes (docs/info.md, Commands)
 NOP = 0
 CLEAR = 1
 LOAD_W = 2

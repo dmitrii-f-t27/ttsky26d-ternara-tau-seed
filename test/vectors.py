@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""Test data for the neuron vector D18 (SPEC section 6.2).
+"""Test data for the neuron vector D18 (docs/info.md, How to test).
 
 32 ternary weights, packed four per LOAD_W byte: DATA[2k+1:2k] holds weight
 4j+k of byte j. Weight codes: 00 = 0, 01 = +1, 11 = -1.

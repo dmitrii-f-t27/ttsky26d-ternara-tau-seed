@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""cocotb tests for tt_um_ternara_tau_seed (SPEC v0.2 section 6).
+"""cocotb tests for tt_um_ternara_tau_seed.
 
-The directed tests below are the vectors of SPEC section 6.2. Every test:
+The directed tests below use the vectors of docs/info.md, How to test. Every test:
 
 * drives only the top-level ports (see tau_driver.py),
 * compares every sample with the mirrored command-level model (model.py),
-* and asserts the numbers written here from the specification.
+* and asserts the numbers written here from the datasheet.
 
 Numbers are given for NW = 32 and, where they depend on NW, as formulas. The
 same tests run on RTL and on the gate-level netlist (GATES=yes).
 
-The random tests (SPEC section 6.3) replay the seeded operation streams of
+The random tests (docs/info.md, How to test) replay the seeded operation streams of
 randgen.py. RTL: 4 seeds x 5000 operations. Gate level: seeds A and B, the
 first 1000 operations (a prefix of the RTL stream). test/expected_tests.json
 lists the names that must show up in results.xml; test/tau_guard.py checks it.
@@ -50,7 +50,7 @@ N_OPS_GL = 1000
 
 
 def pick(nw32, formula):
-    """The number written in the specification for NW = 32, else the NW formula."""
+    """The number written in the datasheet for NW = 32, else the NW formula."""
     return nw32 if NW == 32 else formula
 
 
@@ -391,7 +391,7 @@ async def test_nw_probe(dut):
 
 
 # ---------------------------------------------------------------------------
-# Random tests (SPEC section 6.3)
+# Random tests (docs/info.md, How to test)
 # ---------------------------------------------------------------------------
 
 async def run_random(dut, name, seed):
@@ -413,7 +413,7 @@ async def run_random(dut, name, seed):
             "gate-level operations are not a prefix of the RTL operations"
         )
 
-    # Coverage is counted on the model; every minimum of PLAN 1.4 must hold.
+    # Coverage is counted on the model; every minimum in randgen.COVERAGE_MIN must hold.
     cov = randgen.coverage(ops, NW)
     dut._log.info("%s coverage (%s, NW = %d): %s", name, mode, NW, cov)
     unmet = randgen.coverage_failures(cov, mode, NW)

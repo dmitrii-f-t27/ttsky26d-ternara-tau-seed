@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""Consistency check of NW, CLOCK_PERIOD and clock_hz (SPEC section 5).
+"""Consistency check of NW, CLOCK_PERIOD and clock_hz across the repository.
 
 The same numbers live in several files. This script fails when they drift:
 
@@ -9,12 +9,16 @@ The same numbers live in several files. This script fails when they drift:
     n is 0, 16 or 32, and n equals NW in tau_config.py and NW in
     ../demo/tau_seed_demo.py;
   * CLOCK_PERIOD in ../src/config.json is 40 or 100 (ns), and
-    clock_hz in ../info.yaml times CLOCK_PERIOD is 1e9.
+    clock_hz in ../info.yaml times CLOCK_PERIOD is 1e9;
+  * ../docs/info.md has exactly one "NW = <n> ternary weights" and exactly one
+    "The target clock is <m> MHz"; n equals NW and m times 1e6 equals clock_hz.
+    Every other "NW = <n>" in the datasheet must name the same n.
 
 Two checks are SKIPPED, loudly, while their file is still a placeholder:
 
   * the demo script, while there is no ../demo directory;
-  * clock_hz, while ../info.yaml still names the template module tt_um_example.
+  * clock_hz, while ../info.yaml still names the template module tt_um_example;
+    the datasheet clock line is then only checked to be there once.
 
 A SKIPPED item is printed in the PASS line. `--strict` turns each SKIPPED item
 into a failure; use it for the final review and for CI once the demo and
@@ -41,6 +45,9 @@ NW_PROJECT = re.compile(r"localparam\s+integer\s+NW\s*=\s*(\d+)\s*;")
 NW_PY = re.compile(r"^NW\s*=\s*(\d+)\s*(?:#.*)?$", re.MULTILINE)
 CLOCK_HZ = re.compile(r"^\s*clock_hz:\s*(\d+)\s*(?:#.*)?$", re.MULTILINE)
 TOP_MODULE = re.compile(r'^\s*top_module:\s*"([^"]*)"', re.MULTILINE)
+DOCS_NW = re.compile(r"NW = (\d+) ternary weights")
+DOCS_ANY_NW = re.compile(r"\bNW = (\d+)\b")
+DOCS_CLOCK = re.compile(r"The target clock is (\d+) MHz")
 
 
 def _read(path):
@@ -106,6 +113,7 @@ def check(root, strict=False):
 
     # --- clock ----------------------------------------------------------
     period = None
+    hz = None
     text = _read(os.path.join(root, "src", "config.json"))
     if text is None:
         problems.append("src/config.json: cannot read")
@@ -143,12 +151,33 @@ def check(root, strict=False):
                     "info.yaml clock_hz = %d times CLOCK_PERIOD = %d ns is %d, expected 1000000000"
                     % (hz, period, hz * period)
                 )
+
+    # --- datasheet --------------------------------------------------------
+    text = _read(os.path.join(root, "docs", "info.md"))
+    docs_nw = None
+    docs_mhz = None
+    if text is None:
+        problems.append("docs/info.md: cannot read")
+    else:
+        docs_nw = _one_int(DOCS_NW, text, "docs/info.md 'NW = <n> ternary weights'", problems)
+        if docs_nw is not None and nw is not None and docs_nw != nw:
+            problems.append("docs/info.md says NW = %d but src/project.v NW = %d" % (docs_nw, nw))
+        if nw is not None:
+            stale = sorted(set(int(n) for n in DOCS_ANY_NW.findall(text)) - set([nw]))
+            for n in stale:
+                problems.append("docs/info.md mentions NW = %d but src/project.v NW = %d" % (n, nw))
+        docs_mhz = _one_int(DOCS_CLOCK, text, "docs/info.md 'The target clock is <m> MHz'", problems)
+        if docs_mhz is not None and hz is not None and docs_mhz * 1000000 != hz:
+            problems.append(
+                "docs/info.md says the target clock is %d MHz but info.yaml clock_hz = %d" % (docs_mhz, hz)
+            )
+    values["docs"] = None if text is None else "NW%s/%sMHz" % (docs_nw, docs_mhz)
     return problems, values
 
 
 def main(argv=None):
     here = os.path.dirname(os.path.abspath(__file__))
-    parser = argparse.ArgumentParser(description="Check NW, CLOCK_PERIOD and clock_hz agree.")
+    parser = argparse.ArgumentParser(description="Check NW, CLOCK_PERIOD, clock_hz and the datasheet agree.")
     parser.add_argument("--root", default=os.path.dirname(here), help="repository root (default: parent of test/)")
     parser.add_argument("--strict", action="store_true", help="a SKIPPED item is a failure")
     args = parser.parse_args(argv)
@@ -158,8 +187,8 @@ def main(argv=None):
         print("tau_check_config: FAIL " + "; ".join(problems))
         return 1
     print(
-        "tau_check_config: PASS NW=%s CLOCK_PERIOD=%s clock_hz=%s demo=%s"
-        % (values["NW"], values["CLOCK_PERIOD"], values["clock_hz"], values["demo"])
+        "tau_check_config: PASS NW=%s CLOCK_PERIOD=%s clock_hz=%s demo=%s docs=%s"
+        % (values["NW"], values["CLOCK_PERIOD"], values["clock_hz"], values["demo"], values["docs"])
     )
     return 0
 

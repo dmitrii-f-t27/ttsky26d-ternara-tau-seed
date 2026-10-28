@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Dmitrii Fedorov
-"""Mutation check of the tau seed RTL (SPEC section 6.4).
+"""Mutation check of the tau seed RTL (see test/README.md).
 
 For every entry of mutants.json this script
 
