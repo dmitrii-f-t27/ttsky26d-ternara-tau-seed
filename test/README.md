@@ -50,7 +50,8 @@ surfer tb.fst
 
 `make` in this directory runs `tau_guarded` (see the end of [Makefile](Makefile)), which
 
-1. checks that `NW`, `CLOCK_PERIOD` and `clock_hz` agree (`tau_check_config.py`),
+1. checks that `NW` (src/project.v, tau_config.py, demo/tau_seed_demo.py), `CLOCK_PERIOD`, `clock_hz`
+   and the NW and clock lines of docs/info.md agree (`tau_check_config.py`),
 2. runs the cocotb simulation (`make sim`),
 3. runs `tau_guard.py`, which fails unless `results.xml` holds exactly the test names of
    [expected_tests.json](expected_tests.json) (24 for RTL, 22 for gate level), each once, and none failed,

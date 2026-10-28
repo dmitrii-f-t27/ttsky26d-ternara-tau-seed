@@ -78,7 +78,7 @@ def acc_and_ack(tt):
 
 
 # ---------------------------------------------------------------------------
-# the demo against the good mock and the three broken ones
+# the demo against the good mock and the broken ones (BrokenMock.KINDS)
 # ---------------------------------------------------------------------------
 
 def test_good_mock_passes(capsys):

@@ -8,9 +8,10 @@
 #     import tau_seed_demo
 #     tau_seed_demo.main()
 #
-# It prints one line, `TAU SEED DEMO: PASS` or `TAU SEED DEMO: FAIL <reason>`,
-# and main() returns True or False. An exception from the board SDK is reported
-# as `TAU SEED DEMO: FAIL setup: <exception>`.
+# It prints its progress and ends with one verdict line, `TAU SEED DEMO: PASS`
+# or `TAU SEED DEMO: FAIL <reason>`, and main() returns True or False. An
+# exception from the board SDK is reported as
+# `TAU SEED DEMO: FAIL setup: <exception>`.
 #
 # The demo follows the host rules of docs/info.md:
 #   * the clock is single-stepped (clock_project_once), never a PWM clock;
