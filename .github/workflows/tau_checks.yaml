@@ -1,0 +1,192 @@
+name: tau_checks
+
+# Extra checks for this design. The Tiny Tapeout workflows (test, gds, docs, fpga) stay as in
+# the template; their false-green guard is in test/Makefile.
+#
+#   python   pytest of the model, the guard and the board demo, plus the NW / clock consistency check
+#   lint     Verilog-2005 compile, verilator lint, yosys synthesis with a latch check, for NW from
+#            src/project.v and for the other valid values (32, 16, 0); NW = 8 has to fail
+#   mutants  16 broken copies of the RTL must each be caught by the cocotb tests (control M00 must pass)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install Python packages
+        run: pip install -r test/requirements.txt
+
+      - name: Run pytest
+        run: python -B -m pytest -q test/test_model.py test/test_tau_guard.py demo/test_demo_host.py
+
+      - name: Check that NW, CLOCK_PERIOD and clock_hz agree
+        run: |
+          cd test
+          python tau_check_config.py --strict
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Install verilator, yosys and iverilog
+        run: sudo apt-get update && sudo apt-get install -y verilator yosys iverilog
+
+      - name: Tool versions
+        run: |
+          iverilog -V | head -n 1
+          verilator --version
+          yosys -V
+
+      - name: Helper for commands that must fail
+        run: |
+          # must_fail.sh NEEDLE COMMAND...: COMMAND has to exit non-zero and its output has to name NEEDLE,
+          # so that a failure for an unrelated reason does not count.
+          cat > "$RUNNER_TEMP/must_fail.sh" <<'EOF'
+          #!/bin/bash
+          needle=$1
+          shift
+          if out=$("$@" 2>&1); then
+            echo "$out"
+            echo "FAIL: this command had to fail but exited 0: $*"
+            exit 1
+          fi
+          echo "$out"
+          if ! echo "$out" | grep -q -- "$needle"; then
+            echo "FAIL: the command failed without naming $needle: $*"
+            exit 1
+          fi
+          echo "ok: failed as required: $*"
+          EOF
+          chmod +x "$RUNNER_TEMP/must_fail.sh"
+
+      - name: Write project.v with the other NW values and with NW = 8
+        run: |
+          # The parameter NW lives in src/project.v. Each copy must differ from the original in exactly that line.
+          # The other valid values are 32, 16 and 0 minus the one in src/project.v; 8 is the invalid one.
+          nw_src=$(sed -n 's/.*localparam integer NW = \([0-9]*\);.*/\1/p' src/project.v)
+          case "$nw_src" in 32|16|0) ;; *) echo "FAIL: NW in src/project.v is not 32, 16 or 0: '$nw_src'"; exit 1 ;; esac
+          echo "NW in src/project.v: $nw_src"
+          for nw in 32 16 0 8; do
+            if [ "$nw" = "$nw_src" ]; then continue; fi
+            d="$RUNNER_TEMP/nw/nw$nw"
+            mkdir -p "$d"
+            sed "s/localparam integer NW = $nw_src;/localparam integer NW = $nw;/" src/project.v > "$d/project.v"
+            cp src/tau_seed_core.v "$d/tau_seed_core.v"
+            test "$(grep -c "localparam integer NW = $nw;" "$d/project.v")" = 1
+            test "$(diff src/project.v "$d/project.v" | grep -c '^>')" = 1
+          done
+
+      - name: No initial blocks and no delays in src
+        run: |
+          if grep -nE 'initial|#[0-9]' src/*.v; then
+            echo "FAIL: initial or a delay found in src"
+            exit 1
+          fi
+          echo "ok: no initial, no delay"
+
+      - name: Compile with iverilog -g2005
+        run: |
+          nw_src=$(sed -n 's/.*localparam integer NW = \([0-9]*\);.*/\1/p' src/project.v)
+          case "$nw_src" in 32|16|0) ;; *) echo "FAIL: NW in src/project.v is not 32, 16 or 0: '$nw_src'"; exit 1 ;; esac
+          set -x
+          iverilog -g2005 -Wall -o /dev/null src/project.v src/tau_seed_core.v
+          for nw in 32 16 0; do
+            if [ "$nw" = "$nw_src" ]; then continue; fi
+            iverilog -g2005 -Wall -s tau_seed_core -Ptau_seed_core.NW=$nw -o /dev/null src/project.v src/tau_seed_core.v
+          done
+          "$RUNNER_TEMP/must_fail.sh" tau_seed_invalid_NW \
+            iverilog -g2005 -Wall -s tau_seed_core -Ptau_seed_core.NW=8 -o /dev/null src/project.v src/tau_seed_core.v
+
+      - name: Lint with verilator
+        run: |
+          # DECLFILENAME is the only waiver.
+          nw_src=$(sed -n 's/.*localparam integer NW = \([0-9]*\);.*/\1/p' src/project.v)
+          case "$nw_src" in 32|16|0) ;; *) echo "FAIL: NW in src/project.v is not 32, 16 or 0: '$nw_src'"; exit 1 ;; esac
+          VL="verilator --lint-only -Wall -Wno-DECLFILENAME --language 1364-2005"
+          set -x
+          $VL --top-module tt_um_ternara_tau_seed src/project.v src/tau_seed_core.v
+          for nw in 32 16 0; do
+            if [ "$nw" = "$nw_src" ]; then continue; fi
+            $VL --top-module tau_seed_core -GNW=$nw src/tau_seed_core.v
+            $VL --top-module tt_um_ternara_tau_seed "$RUNNER_TEMP/nw/nw$nw/project.v" "$RUNNER_TEMP/nw/nw$nw/tau_seed_core.v"
+          done
+          "$RUNNER_TEMP/must_fail.sh" tau_seed_invalid_NW $VL --top-module tau_seed_core -GNW=8 src/tau_seed_core.v
+          "$RUNNER_TEMP/must_fail.sh" tau_seed_invalid_NW $VL --top-module tt_um_ternara_tau_seed "$RUNNER_TEMP/nw/nw8/project.v" "$RUNNER_TEMP/nw/nw8/tau_seed_core.v"
+
+      - name: Synthesize with yosys (no latches)
+        run: |
+          # Generic gate counts only. The cell counts of the Tiny Tapeout flow come from the gds workflow.
+          nw_src=$(sed -n 's/.*localparam integer NW = \([0-9]*\);.*/\1/p' src/project.v)
+          case "$nw_src" in 32|16|0) ;; *) echo "FAIL: NW in src/project.v is not 32, 16 or 0: '$nw_src'"; exit 1 ;; esac
+          LATCH='select -assert-none t:$_DLATCH* t:$dlatch*'
+          set -x
+          yosys -q -l "$RUNNER_TEMP/yosys-nw$nw_src.log" -p "read_verilog src/project.v src/tau_seed_core.v; synth -top tt_um_ternara_tau_seed; $LATCH; stat"
+          tail -n 45 "$RUNNER_TEMP/yosys-nw$nw_src.log"
+          for nw in 32 16 0; do
+            if [ "$nw" = "$nw_src" ]; then continue; fi
+            yosys -q -l "$RUNNER_TEMP/yosys-nw$nw.log" -p "read_verilog $RUNNER_TEMP/nw/nw$nw/project.v $RUNNER_TEMP/nw/nw$nw/tau_seed_core.v; synth -top tt_um_ternara_tau_seed; $LATCH; stat"
+            tail -n 45 "$RUNNER_TEMP/yosys-nw$nw.log"
+          done
+          "$RUNNER_TEMP/must_fail.sh" tau_seed_invalid_NW \
+            yosys -q -p "read_verilog $RUNNER_TEMP/nw/nw8/project.v $RUNNER_TEMP/nw/nw8/tau_seed_core.v; synth -top tt_um_ternara_tau_seed"
+
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Install iverilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install Python packages
+        run: pip install -r test/requirements.txt
+
+      - name: Run the mutants
+        run: |
+          python test/mutants/run_mutants.py --work "$RUNNER_TEMP/mut" --table "$RUNNER_TEMP/mutants-table.md" 2>&1 | tee "$RUNNER_TEMP/mutants.log"
+
+      - name: Check the summary line
+        run: |
+          # The run has to end with exactly this line: control passes, all 16 mutants killed, nothing survived or invalid.
+          last=$(grep -v '^[[:space:]]*$' "$RUNNER_TEMP/mutants.log" | tail -n 1)
+          echo "last line: $last"
+          test "$last" = "M00 PASS; 16/16 KILLED"
+
+      - name: Upload mutant results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-result
+          path: |
+            ${{ runner.temp }}/mutants.log
+            ${{ runner.temp }}/mutants-table.md
