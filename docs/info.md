@@ -161,10 +161,10 @@ for _ in range(3):
     tt.clock_project_once()          # STROBE stays low for 3 pulses
 
 # Read the result: low byte at BSEL 0, high byte at BSEL 1, flags from uio_out.
-lo = tt.uo_out.value
+lo = int(tt.uo_out.value)
 tt.uio_in.value = 0x10
-hi = tt.uo_out.value
-flags = tt.uio_out.value
+hi = int(tt.uo_out.value)
+flags = int(tt.uio_out.value)
 print("acc =", (hi << 8) | lo, "ACK =", (flags >> 7) & 1)
 ```
 

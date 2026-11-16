@@ -68,10 +68,10 @@ def send(tt, cmd, data, wait=3):
 
 
 def acc_and_ack(tt):
-    lo = tt.uo_out.value
+    lo = int(tt.uo_out.value)
     tt.uio_in.value = 0x10
-    hi = tt.uo_out.value
-    ack = (tt.uio_out.value >> 7) & 1
+    hi = int(tt.uo_out.value)
+    ack = (int(tt.uio_out.value) >> 7) & 1
     tt.uio_in.value = 0
     v = (hi << 8) | lo
     return (v - 65536 if v & 0x8000 else v), ack
@@ -209,7 +209,7 @@ def test_good_mock_flags_do_not_depend_on_bsel():
     flags = []
     for bsel in (0, 1, 0):
         tt.uio_in.value = bsel << 4
-        flags.append(tt.uio_out.value & 0xE0)
+        flags.append(int(tt.uio_out.value) & 0xE0)
     assert flags[0] == flags[1] == flags[2]
 
 
@@ -407,6 +407,37 @@ def test_bus_value_checks():
         tt.shuttle.tt_um_no_such_design.enable()
 
 
+def test_port_reads_are_not_ints():
+    tt = MockTT()
+    for bus in (tt.ui_in, tt.uio_in, tt.uio_oe_pico, tt.uo_out, tt.uio_out):
+        assert not isinstance(bus.value, int)
+    v = tt.uo_out.value
+    assert int(v) == 0xC7
+    assert v == 0xC7
+    assert v == tt.uo_out.value
+    assert v != 0xC6
+    assert not (v == 0xC6)
+    assert repr(v) == "<LogicArray('11000111', Range(7, 'downto', 0))>"
+    with pytest.raises(TypeError):
+        v << 8
+    with pytest.raises(TypeError):
+        v >> 7
+    with pytest.raises(TypeError):
+        1 << v
+    with pytest.raises(TypeError):
+        v & 0xE0
+    with pytest.raises(TypeError):
+        v | 1
+    with pytest.raises(TypeError):
+        v + 1
+    with pytest.raises(TypeError):
+        v < 1
+    with pytest.raises(TypeError):
+        v[0]
+    with pytest.raises(TypeError):
+        bool(v)
+
+
 # ---------------------------------------------------------------------------
 # data and constants
 # ---------------------------------------------------------------------------
@@ -465,6 +496,20 @@ def test_docs_manual_steps_run_on_the_mock(capsys):
     with mock_tt.fake_ttboard(tt):
         exec(compile(blocks[0], "docs/info.md", "exec"), {"__name__": "docs_manual_steps"})
     assert capsys.readouterr().out.strip().splitlines()[-1] == "acc = 5 ACK = 1"
+    assert tt.cyc.fired == 1
+
+
+def test_docs_manual_steps_without_int_stop_at_the_shift():
+    blocks = [b for b in re.findall(r"```python\n(.*?)```", _docs_text(), re.S) if "DemoBoard.get()" in b]
+    assert len(blocks) == 1
+    block = blocks[0]
+    assert block.count("int(tt.uo_out.value)") == 2
+    assert block.count("int(tt.uio_out.value)") == 1
+    bare = block.replace("int(tt.uo_out.value)", "tt.uo_out.value").replace("int(tt.uio_out.value)", "tt.uio_out.value")
+    tt = MockTT(prepared=False, pwm_running=True)
+    with mock_tt.fake_ttboard(tt):
+        with pytest.raises(TypeError, match="<<"):
+            exec(compile(bare, "docs/info.md", "exec"), {"__name__": "docs_manual_steps"})
     assert tt.cyc.fired == 1
 
 

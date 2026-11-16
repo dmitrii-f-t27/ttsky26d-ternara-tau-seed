@@ -4,7 +4,10 @@
 
 demo/tau_seed_demo.py runs against MockTT on a computer. The chip behind the
 mock is TauSeedCycle from test/model.py (STROBE synchroniser, synchronous
-reset, ACK latency), the same model the cocotb tests compare the RTL with.
+reset, ACK latency). TauSeedCycle drives a TauSeedModel, the command-level
+model that the cocotb tests compare the RTL with. The pin and clock layer of
+TauSeedCycle itself is checked only by the unit tests in test/test_model.py;
+no test in this repository compares it with the RTL or the netlist.
 
 What is modelled (from the firmware SDK facts the demo relies on):
 
@@ -15,6 +18,12 @@ What is modelled (from the firmware SDK facts the demo relies on):
 * tt.uo_out, tt.uio_out: read-only buses. uio_out returns the chip's
   uio[7:5] and, for the bits the RP drives, the level the RP drives. A host
   that does not mask uio_out with 0xE0 therefore reads wrong flags.
+* A read of `.value` on any of these buses returns a port value object, not an
+  int. In the firmware SDK a port read returns a LogicArray: int() and == work
+  on it, the shift operators << and >> do not. The mock's object is stricter:
+  it supports int(), == and != only; every other operator, indexing and a
+  truth test raise TypeError. Host code therefore converts each read with
+  int() before it does arithmetic, as the SDK documentation shows.
 * tt.clock_project_once(msDelay=0): one full clock pulse. The chip samples its
   inputs at the rising edge. Needs the project to be enabled first.
 * tt.clock_project_stop(): stops a running PWM clock, clock low.
@@ -151,8 +160,31 @@ _FAULTS = {
 # the board object
 # ---------------------------------------------------------------------------
 
+class _PortValue(object):
+    """What a read of `<bus>.value` returns: int(), == and != only."""
+
+    def __init__(self, v):
+        self._v = v
+
+    def __int__(self):
+        return self._v
+
+    def __eq__(self, other):
+        if isinstance(other, _PortValue):
+            return self._v == other._v
+        if isinstance(other, int) and not isinstance(other, bool):
+            return self._v == other
+        return NotImplemented
+
+    def __bool__(self):
+        raise TypeError("a port value has no truth value; use int(<port>.value)")
+
+    def __repr__(self):
+        return "<LogicArray('%s', Range(7, 'downto', 0))>" % format(self._v, "08b")
+
+
 class _Bus(object):
-    """A byte-wide bus with a `.value` attribute."""
+    """A byte-wide bus. A read of `.value` returns a port value; a write takes an int."""
 
     def __init__(self, name, getter, setter=None):
         self._name = name
@@ -161,7 +193,7 @@ class _Bus(object):
 
     @property
     def value(self):
-        return self._get()
+        return _PortValue(self._get())
 
     @value.setter
     def value(self, v):

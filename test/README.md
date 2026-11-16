@@ -61,6 +61,11 @@ The last line of a good RTL run is `tau_guard: PASS mode=rtl tests=24/24`. With 
 `tau_guard: PASS mode=gl tests=22/22`. Use `make WAVES=0` to leave the waveform dump out.
 Run `cd test && make`, not `make -C test`: the Makefile uses `$(PWD)`.
 
+The gate-level run is a thinner random test than the RTL run. RTL runs four seeded random streams (A to D)
+of 5000 operations each. Gate level runs seeds A and B only, and only the first 1000 operations of each
+(a prefix of the RTL stream). With NW = 32 these two prefixes contain no reset operation, so a reset in the
+middle of a random stream is exercised on RTL only. The other 20 tests are the same in both runs.
+
 The pytest checks of the guard run with `python -m pytest -q test/test_tau_guard.py`.
 
 ## Mutants
